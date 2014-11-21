@@ -9,6 +9,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "matrix_test", "matrix_test.
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "num_pass", "num_pass.vcxproj", "{B672644B-8BD1-4C65-84C7-4BC967403BC7}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "simple_zone", "simple_zone.vcxproj", "{E01C14E8-C40A-416C-810D-FCEF198B9746}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -47,6 +49,12 @@ Global
 		{B672644B-8BD1-4C65-84C7-4BC967403BC7}.Release|Win32.ActiveCfg = Release|Win32
 		{B672644B-8BD1-4C65-84C7-4BC967403BC7}.Release|Win32.Build.0 = Release|Win32
 		{B672644B-8BD1-4C65-84C7-4BC967403BC7}.Release|x64.ActiveCfg = Release|Win32
+		{E01C14E8-C40A-416C-810D-FCEF198B9746}.Debug|Win32.ActiveCfg = Debug|Win32
+		{E01C14E8-C40A-416C-810D-FCEF198B9746}.Debug|Win32.Build.0 = Debug|Win32
+		{E01C14E8-C40A-416C-810D-FCEF198B9746}.Debug|x64.ActiveCfg = Debug|Win32
+		{E01C14E8-C40A-416C-810D-FCEF198B9746}.Release|Win32.ActiveCfg = Release|Win32
+		{E01C14E8-C40A-416C-810D-FCEF198B9746}.Release|Win32.Build.0 = Release|Win32
+		{E01C14E8-C40A-416C-810D-FCEF198B9746}.Release|x64.ActiveCfg = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
