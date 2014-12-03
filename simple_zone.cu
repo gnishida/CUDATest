@@ -73,5 +73,7 @@ int main()
 
 	// CPU側で確保したメモリを開放する
     free(results);
+
+	cudaDeviceReset();
 }
   

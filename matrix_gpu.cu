@@ -72,5 +72,7 @@ int main(int argc, char** argv) {
 	// デバイスメモリ開放
 	cudaFree(dMatrixA);
 	cudaFree(dMatrixB);
-	cudaFree(dMatrixC); 
+	cudaFree(dMatrixC);
+
+	cudaDeviceReset();
 }

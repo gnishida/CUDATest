@@ -11,7 +11,10 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="simple_zone.cu" />
+    <CudaCompile Include="ZonePlanMCMC.cu" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ZonePlanMCMC.cuh" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{E01C14E8-C40A-416C-810D-FCEF198B9746}</ProjectGuid>
@@ -93,7 +96,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>cudart.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;cutil32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>cudart.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(CudaToolkitLibDir);../../common/lib/$(PlatformName);../../../shared/lib/$(PlatformName)</AdditionalLibraryDirectories>
       <OutputFile>$(OutDir)/simple_zone.exe</OutputFile>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
@@ -103,7 +106,7 @@
       </Command>
     </PostBuildEvent>
     <CudaCompile>
-      <CodeGeneration>compute_10,sm_10;compute_20,sm_20;compute_30,sm_30</CodeGeneration>
+      <CodeGeneration>compute_11,sm_11;compute_20,sm_20;compute_30,sm_30</CodeGeneration>
       <Runtime>MT</Runtime>
     </CudaCompile>
   </ItemDefinitionGroup>

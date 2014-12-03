@@ -5,7 +5,7 @@
 
 #define GRID_SIZE	1
 #define BLOCK_SIZE	8
-#define NUM_TRY		30000
+#define NUM_TRY		3000000
 
 /**
  * 線形乱数生成器
@@ -88,5 +88,7 @@ int main()
 
 	// CPU側で確保したメモリを開放する
     free(results);
+
+	cudaDeviceReset();
 }
   

@@ -24,5 +24,7 @@ int main(void) {
 	// 結果を出力する
     printf("12 + 2000 = %d\n", c);
 
+	cudaDeviceReset();
+
     return 0;
 }
