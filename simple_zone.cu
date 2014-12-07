@@ -8,6 +8,7 @@
  * しかも、GPUで並列化することで、さらに計算時間を短縮できる。
  *
  * 残念ながら、CPU版より遅い。。。
+ * １つの原因が、atomicMinだ。処理が完了するまでメモリをロックするらしい。そりゃ遅くなるよね。
  */
 
 #include <stdio.h>
@@ -299,7 +300,6 @@ int main()
 	start = clock();
 	for (int iter = 0; iter < 1000; ++iter) {
 		computeDistanceToStoreCPU(hostZoningPlan, hostDistanceMap2);
-		cudaDeviceSynchronize();
 	}
 	end = clock();
 	printf("computeDistanceToStore CPU: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
@@ -313,7 +313,7 @@ int main()
 	start = clock();
 	for (int iter = 0; iter < 1000; ++iter) {
 		computeDistanceToStore<<<NUM_GPU_BLOCKS, NUM_GPU_THREADS>>>(devZoningPlan, devDistanceMap);
-		//cudaDeviceSynchronize();
+		cudaDeviceSynchronize();
 	}
 	end = clock();
 	printf("computeDistanceToStore: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
