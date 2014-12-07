@@ -299,6 +299,7 @@ int main()
 	start = clock();
 	for (int iter = 0; iter < 1000; ++iter) {
 		computeDistanceToStoreCPU(hostZoningPlan, hostDistanceMap2);
+		cudaDeviceSynchronize();
 	}
 	end = clock();
 	printf("computeDistanceToStore CPU: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);

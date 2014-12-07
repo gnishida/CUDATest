@@ -13,8 +13,8 @@
 #include <list>
 #include <time.h>
 
-#define CITY_SIZE 100
-#define NUM_GPU_BLOCKS 4
+#define CITY_SIZE 20
+#define NUM_GPU_BLOCKS 1
 #define NUM_GPU_THREADS 32
 #define NUM_FEATURES 5
 
@@ -133,7 +133,7 @@ void generateZoningPlan(ZoningPlan& zoningPlan, std::vector<float> zoneTypeDistr
 __global__
 void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 	// キュー
-	const int queue_size = 1000;
+	const int queue_size = 1300;
 	Point2DAndFeature queue[queue_size];
 	int queue_begin = 0;
 	int queue_end = 0;
@@ -158,6 +158,7 @@ void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 		}
 	}
 
+	__syncthreads();
 
 	// 距離マップを生成
 	while (queue_begin < queue_end) {
@@ -279,7 +280,7 @@ int main()
 	printf("generateZoningPlan: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 	
 	// デバッグ用
-	if (CITY_SIZE <= 8) {
+	if (CITY_SIZE <= 50) {
 		for (int r = CITY_SIZE - 1; r >= 0; --r) {
 			for (int c = 0; c < CITY_SIZE; ++c) {
 				printf("%d, ", hostZoningPlan->zones[r][c].type);
@@ -313,6 +314,7 @@ int main()
 	start = clock();
 	for (int iter = 0; iter < 1000; ++iter) {
 		computeDistanceToStore<<<NUM_GPU_BLOCKS, NUM_GPU_THREADS>>>(devZoningPlan, devDistanceMap);
+		cudaDeviceSynchronize();
 	}
 	end = clock();
 	printf("computeDistanceToStore: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
@@ -327,9 +329,11 @@ int main()
 		bool err = false;
 		for (int r = CITY_SIZE - 1; r >= 0 && !err; --r) {
 			for (int c = 0; c < CITY_SIZE && !err; ++c) {
-				if (hostDistanceMap->distances[r][c][0] != hostDistanceMap2->distances[r][c][0]) {
-					err = true;
-					printf("ERROR! %d,%d\n", r, c);
+				for (int k = 0; k < NUM_FEATURES; ++k) {
+					if (hostDistanceMap->distances[r][c][k] != hostDistanceMap2->distances[r][c][k]) {
+						err = true;
+						printf("ERROR! %d,%d %d\n", r, c, k);
+					}
 				}
 			}
 		}
@@ -337,7 +341,7 @@ int main()
 
 
 	// デバッグ用
-	if (CITY_SIZE <= 8) {
+	if (CITY_SIZE <= 50) {
 		for (int r = CITY_SIZE - 1; r >= 0; --r) {
 			for (int c = 0; c < CITY_SIZE; ++c) {
 				printf("%d, ", hostDistanceMap->distances[r][c][4]);
