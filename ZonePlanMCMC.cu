@@ -115,6 +115,7 @@ void MCMCstep(int numIterations, unsigned int randx, zone_plan* plan, zone_plan*
 	float levelPeople[3] = {1, 5, 10};
 
 	// initial plan
+	/*
 	{
 		float zoneTypeDistribution[18] = {0.2, 0.38, 0.2, 0.06, 0.05, 0.03, 0.02, 0.01, 0.01, 0.02, 0, 0, 0.01, 0, 0, 0.01, 0, 0};
 		float Z = sum(zoneTypeDistribution, 18);
@@ -135,27 +136,24 @@ void MCMCstep(int numIterations, unsigned int randx, zone_plan* plan, zone_plan*
 
 		plan->score = 0.0;
 	}
+	*/
 
 	bestPlan->score = 0.0;
-	//float current_score = 0.0f;
 	for (int loop = 0; loop < numIterations; ++loop) {
 		// create a proposal
 		{
 			// copy the current plan to the proposal
-			*proposal = *plan;
+			//*proposal = *plan;
 
 			// swap a zone type between two blocks
-			while (true) {
+			/*while (true) {
 				int x1 = randf(&randx, 0, ZONE_GRID_SIZE);
 				int y1 = randf(&randx, 0, ZONE_GRID_SIZE);
 				int x2 = randf(&randx, 0, ZONE_GRID_SIZE);
 				int y2 = randf(&randx, 0, ZONE_GRID_SIZE);
 
-				if (proposal->zones[y1][x1].type != proposal->zones[y2][x2].type || proposal->zones[y1][x1].level != proposal->zones[y2][x2].level) {
-					swapZoneType(&proposal->zones[y1][x1], &proposal->zones[y2][x2]);
-					break;
-				}
-			}
+				swapZoneType(&proposal->zones[y1][x1], &proposal->zones[y2][x2]);
+			}*/
 		}
 
 		// 
@@ -164,6 +162,7 @@ void MCMCstep(int numIterations, unsigned int randx, zone_plan* plan, zone_plan*
 
 		for (int r = 0; r < ZONE_GRID_SIZE; ++r) {
 			for (int c = 0; c < ZONE_GRID_SIZE; ++c) {
+				/*
 				// skip for non-residential block
 				if (plan->zones[r][c].type != 0) continue;
 
@@ -176,15 +175,13 @@ void MCMCstep(int numIterations, unsigned int randx, zone_plan* plan, zone_plan*
 				float distToSchool = 4000;
 				float distToLibrary = 4000;
 
-				int xxx = 0;
-				for (int r2 = 0; r2 < ZONE_GRID_SIZE && xxx < 15; ++r2) {
-					for (int c2 = 0; c2 < ZONE_GRID_SIZE && xxx < 15; ++c2) {
+				for (int r2 = 0; r2 < ZONE_GRID_SIZE; ++r2) {
+					for (int c2 = 0; c2 < ZONE_GRID_SIZE; ++c2) {
 						if (proposal->zones[r2][c2].type == 0) continue;
-
-						xxx++;
 
 						//float dist = ZONE_CELL_LEN * sqrtf((r - r2) * (r - r2) + (c - c2) * (c - c2));
 						float dist = ZONE_CELL_LEN * (abs(r - r2) + abs(c - c2));
+						
 						if (proposal->zones[r2][c2].type == 1) { // 店・レストラン
 							if (dist < distToStore) {
 								distToStore = dist;
@@ -213,6 +210,7 @@ void MCMCstep(int numIterations, unsigned int randx, zone_plan* plan, zone_plan*
 				
 				// compute feature
 				float feature[9];
+				
 				feature[0] = expf(-K * distToStore);
 				feature[1] = expf(-K * distToSchool);
 				feature[2] = expf(-K * distToRestaurant);
@@ -228,11 +226,13 @@ void MCMCstep(int numIterations, unsigned int randx, zone_plan* plan, zone_plan*
 					proposal->score += dot2(preference[i], feature) * ratioPeople[i] * levelPeople[proposal->zones[r][c].level - 1];
 					count += ratioPeople[i] * levelPeople[proposal->zones[r][c].level - 1];
 				}
+				*/
 			}
 		}
 
-		proposal->score /= count;
+		//proposal->score /= count;
 		
+		/*
 		// update the best plan
 		if (proposal->score > bestPlan->score) {
 			*bestPlan = *proposal;
@@ -243,6 +243,7 @@ void MCMCstep(int numIterations, unsigned int randx, zone_plan* plan, zone_plan*
 			// accept
 			*plan = *proposal;
 		}
+		*/
 	}
 }
 
@@ -349,4 +350,6 @@ void main() {
 	MCMCstep(10000, 0, plan, proposal, bestPlan);
 	time_t end = clock();
 	printf("CPU version took %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
+
+	cudaDeviceReset();
 }

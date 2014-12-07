@@ -3,16 +3,26 @@
 
 #define GRID_SIZE	200
 
+struct zone_type {
+	int type;
+	int level;
+};
+
+struct zone_plan {
+	zone_type zones[GRID_SIZE][GRID_SIZE];
+	float score;
+};
+
 __host__ __device__
 void MCMC(int numIterations) {
 	float count = 0.0;
 
+	zone_plan* hoge = (zone_plan*)malloc(sizeof(zone_plan));
+	zone_plan* hoge2 = (zone_plan*)malloc(sizeof(zone_plan));
 	for (int i = 0; i < numIterations; ++i) {
+		memcpy(hoge, hoge2, sizeof(zone_plan));
 		for (int r = 0; r < GRID_SIZE; ++r) {
 			for (int c = 0; c < GRID_SIZE; ++c) {
-				for (int k = 0; k < GRID_SIZE; ++k) {
-					count += k * k;
-				}
 			}
 		}
 	}
