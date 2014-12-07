@@ -27,6 +27,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "thrust_test", "thrust_test.
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "complex_zone", "complex_zone.vcxproj", "{490D86C0-281A-4D84-863E-E8A77EE6F4AE}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "my_mcmc", "my_mcmc.vcxproj", "{C93554BE-52CF-4ED4-A736-8C984705CEAF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -87,11 +89,14 @@ Global
 		{5B1E1B66-AC6B-41CB-AC93-AB94FDE56DAD}.Release|x64.ActiveCfg = Release|Win32
 		{5B1E1B66-AC6B-41CB-AC93-AB94FDE56DAD}.Release|x64.Build.0 = Release|Win32
 		{490D86C0-281A-4D84-863E-E8A77EE6F4AE}.Debug|Win32.ActiveCfg = Debug|Win32
-		{490D86C0-281A-4D84-863E-E8A77EE6F4AE}.Debug|Win32.Build.0 = Debug|Win32
 		{490D86C0-281A-4D84-863E-E8A77EE6F4AE}.Debug|x64.ActiveCfg = Debug|Win32
 		{490D86C0-281A-4D84-863E-E8A77EE6F4AE}.Release|Win32.ActiveCfg = Release|Win32
 		{490D86C0-281A-4D84-863E-E8A77EE6F4AE}.Release|Win32.Build.0 = Release|Win32
 		{490D86C0-281A-4D84-863E-E8A77EE6F4AE}.Release|x64.ActiveCfg = Release|Win32
+		{C93554BE-52CF-4ED4-A736-8C984705CEAF}.Debug|Win32.ActiveCfg = Debug|Win32
+		{C93554BE-52CF-4ED4-A736-8C984705CEAF}.Debug|x64.ActiveCfg = Debug|Win32
+		{C93554BE-52CF-4ED4-A736-8C984705CEAF}.Release|Win32.ActiveCfg = Release|Win32
+		{C93554BE-52CF-4ED4-A736-8C984705CEAF}.Release|x64.ActiveCfg = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -6,6 +6,8 @@
  * 従って、全ての住宅ゾーンについて調べると、O(N log M)。
  * 一方、本実装では、各店ゾーンから周辺ゾーンに再帰的に距離を更新していくので、O(N)で済む。
  * しかも、GPUで並列化することで、さらに計算時間を短縮できる。
+ *
+ * 残念ながら、CPU版より遅い。。。
  */
 
 #include <stdio.h>
@@ -14,11 +16,15 @@
 #include <list>
 #include <time.h>
 
-#define CITY_SIZE 400
+#define CITY_SIZE 100
 #define NUM_GPU_BLOCKS 4
 #define NUM_GPU_THREADS 32
 #define NUM_FEATURES 1
 
+#define CUDA_CALL(x) {if((x) != cudaSuccess){ \
+  printf("CUDA error at %s:%d\n",__FILE__,__LINE__); \
+  printf("  %s\n", cudaGetErrorString(cudaGetLastError())); \
+  exit(EXIT_FAILURE);}} 
 
 
 struct ZoneType {
@@ -111,17 +117,29 @@ void generateZoningPlan(ZoningPlan& zoningPlan, std::vector<float> zoneTypeDistr
 	}
 }
 
+__host__
+void showPlan(ZoningPlan* zoningPlan) {
+	if (CITY_SIZE > 8) return;
 
+	for (int r = CITY_SIZE - 1; r >= 0; --r) {
+		for (int c = 0; c < CITY_SIZE; ++c) {
+			printf("%d, ", zoningPlan->zones[r][c].type);
+		}
+		printf("\n");
+	}
+	printf("\n");
+}
 
 /**
  * 直近の店までの距離を計算する（マルチスレッド版）
  */
 __global__
-void computeDistanceToStore(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
+void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 
 	// キュー
-	Point2D queue[1000];
+	const int queue_size = 1000;
+	Point2D queue[queue_size];
 	int queue_begin = 0;
 	int queue_end = 0;
 
@@ -129,18 +147,21 @@ void computeDistanceToStore(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
 	
 	// 分割された領域内で、店を探す
 	for (int i = 0; i < stride; ++i) {
-		int r = (idx * NUM_GPU_BLOCKS * NUM_GPU_THREADS + i) / CITY_SIZE;
-		int c = (idx * NUM_GPU_BLOCKS * NUM_GPU_THREADS + i) % CITY_SIZE;
+		int r = (idx * stride + i) / CITY_SIZE;
+		int c = (idx * stride + i) % CITY_SIZE;
 
-		if (zoningPLan->zones[r][c].type == 1) {
+		if (zoningPlan->zones[r][c].type == 1) {
 			queue[queue_end++] = Point2D(c, r);
 			distanceMap->distances[r][c][0] = 0;
+		} else {
+			distanceMap->distances[r][c][0] = 9999;
 		}
 	}
 
 	// 距離マップを生成
 	while (queue_begin < queue_end) {
 		Point2D pt = queue[queue_begin++];
+		if (queue_begin >= queue_size) queue_begin = 0;
 
 		int d = distanceMap->distances[pt.y][pt.x][0];
 
@@ -148,75 +169,80 @@ void computeDistanceToStore(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
 			int old = atomicMin(&distanceMap->distances[pt.y-1][pt.x][0], d + 1);
 			if (old > d + 1) {
 				queue[queue_end++] = Point2D(pt.x, pt.y-1);
+				if (queue_end >= queue_size) queue_end = 0;
 			}
 		}
 		if (pt.y < CITY_SIZE - 1) {
 			int old = atomicMin(&distanceMap->distances[pt.y+1][pt.x][0], d + 1);
 			if (old > d + 1) {
 				queue[queue_end++] = Point2D(pt.x, pt.y+1);
+				if (queue_end >= queue_size) queue_end = 0;
 			}
 		}
 		if (pt.x > 0) {
 			int old = atomicMin(&distanceMap->distances[pt.y][pt.x-1][0], d + 1);
 			if (old > d + 1) {
 				queue[queue_end++] = Point2D(pt.x-1, pt.y);
+				if (queue_end >= queue_size) queue_end = 0;
 			}
 		}
 		if (pt.x < CITY_SIZE - 1) {
 			int old = atomicMin(&distanceMap->distances[pt.y][pt.x+1][0], d + 1);
 			if (old > d + 1) {
 				queue[queue_end++] = Point2D(pt.x+1, pt.y);
+				if (queue_end >= queue_size) queue_end = 0;
 			}
 		}
 	}
 }
 
 /**
- * 直近の店までの距離を計算する（シングルスレッド版）
+ * 直近の店までの距離を計算する（CPU版）
  */
-__global__
-void computeDistanceToStoreBySingleThread(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
-	Point2D queue[1000];
-	int queue_begin = 0;
-	int queue_end = 0;
+__host__
+void computeDistanceToStoreCPU(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
+	std::list<Point2D> queue;
 
 	for (int i = 0; i < CITY_SIZE * CITY_SIZE; ++i) {
 		int r = i / CITY_SIZE;
 		int c = i % CITY_SIZE;
 
 		if (zoningPLan->zones[r][c].type == 1) {
-			queue[queue_end++] = Point2D(c, r);
+			queue.push_back(Point2D(c, r));
 			distanceMap->distances[r][c][0] = 0;
+		} else {
+			distanceMap->distances[r][c][0] = 9999;
 		}
 	}
 
-	while (queue_begin < queue_end) {
-		Point2D pt = queue[queue_begin++];
+	while (!queue.empty()) {
+		Point2D pt = queue.front();
+		queue.pop_front();
 
 		int d = distanceMap->distances[pt.y][pt.x][0];
 
 		if (pt.y > 0) {
-			int old = atomicMin(&distanceMap->distances[pt.y-1][pt.x][0], d + 1);
-			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x, pt.y-1);
+			if (distanceMap->distances[pt.y-1][pt.x][0] > d + 1) {
+				distanceMap->distances[pt.y-1][pt.x][0] = d + 1;
+				queue.push_back(Point2D(pt.x, pt.y-1));
 			}
 		}
 		if (pt.y < CITY_SIZE - 1) {
-			int old = atomicMin(&distanceMap->distances[pt.y+1][pt.x][0], d + 1);
-			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x, pt.y+1);
+			if (distanceMap->distances[pt.y+1][pt.x][0] > d + 1) {
+				distanceMap->distances[pt.y+1][pt.x][0] = d + 1;
+				queue.push_back(Point2D(pt.x, pt.y+1));
 			}
 		}
 		if (pt.x > 0) {
-			int old = atomicMin(&distanceMap->distances[pt.y][pt.x-1][0], d + 1);
-			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x-1, pt.y);
+			if (distanceMap->distances[pt.y][pt.x-1][0] > d + 1) {
+				distanceMap->distances[pt.y][pt.x-1][0] = d + 1;
+				queue.push_back(Point2D(pt.x-1, pt.y));
 			}
 		}
 		if (pt.x < CITY_SIZE - 1) {
-			int old = atomicMin(&distanceMap->distances[pt.y][pt.x+1][0], d + 1);
-			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x+1, pt.y);
+			if (distanceMap->distances[pt.y][pt.x+1][0] > d + 1) {
+				distanceMap->distances[pt.y][pt.x+1][0] = d + 1;
+				queue.push_back(Point2D(pt.x+1, pt.y));
 			}
 		}
 	}
@@ -246,91 +272,86 @@ int main()
 	end = clock();
 	printf("generateZoningPlan: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 	
-	/*
-	for (int r = CITY_SIZE - 1; r >= 0; --r) {
-		for (int c = 0; c < CITY_SIZE; ++c) {
-			printf("%d, ", hostZoningPlan->zones[r][c].type);
+	if (CITY_SIZE <= 8) {
+		for (int r = CITY_SIZE - 1; r >= 0; --r) {
+			for (int c = 0; c < CITY_SIZE; ++c) {
+				printf("%d, ", hostZoningPlan->zones[r][c].type);
+			}
+			printf("\n");
 		}
 		printf("\n");
 	}
-	printf("\n");
-	*/
 
 	// 初期プランをデバイスバッファへコピー
 	ZoningPlan* devZoningPlan;
-	if (cudaMalloc((void**)&devZoningPlan, sizeof(ZoningPlan)) != cudaSuccess) {
-		printf("memory allocation error!\n");
-		exit(1);
-	}
-	if (cudaMemcpy(devZoningPlan, hostZoningPlan, sizeof(ZoningPlan), cudaMemcpyHostToDevice) != cudaSuccess) {
-		printf("memory copy error!\n");
-		exit(1);
-	}
+	CUDA_CALL(cudaMalloc((void**)&devZoningPlan, sizeof(ZoningPlan)));
+	CUDA_CALL(cudaMemcpy(devZoningPlan, hostZoningPlan, sizeof(ZoningPlan), cudaMemcpyHostToDevice));
 
 	// 距離マップ用に、デバイスバッファを確保
 	DistanceMap* devDistanceMap;
-	cudaMalloc((void**)&devDistanceMap, sizeof(DistanceMap));
+	CUDA_CALL(cudaMalloc((void**)&devDistanceMap, sizeof(DistanceMap)));
+	DistanceMap* devInitialDistanceMap;
+	CUDA_CALL(cudaMalloc((void**)&devInitialDistanceMap, sizeof(DistanceMap)));
 
 
 	///////////////////////////////////////////////////////////////////////
-	// シングルスレッドで、直近の店までの距離を計算
-
-	// 距離をデバイスバッファへコピー
-	cudaMemcpy(devDistanceMap, hostDistanceMap2, sizeof(DistanceMap), cudaMemcpyHostToDevice);
-
-	// スコアの直近の店までの距離を計算
+	// CPU版で、直近の店までの距離を計算
 	start = clock();
-	computeDistanceToStoreBySingleThread<<<1, 1>>>(devZoningPlan, devDistanceMap);
+	for (int iter = 0; iter < 1000; ++iter) {
+		computeDistanceToStoreCPU(hostZoningPlan, hostDistanceMap2);
+	}
 	end = clock();
-	printf("computeDistanceToStoreBySingleThread: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
+	printf("computeDistanceToStore CPU: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 
-	// 距離をCPUバッファへコピー
-	cudaMemcpy(hostDistanceMap2, devDistanceMap, sizeof(DistanceMap), cudaMemcpyDeviceToHost);
 
 	///////////////////////////////////////////////////////////////////////
 	// マルチスレッドで、直近の店までの距離を計算
-
-	// 距離をデバイスバッファへコピー
-	cudaMemcpy(devDistanceMap, hostDistanceMap, sizeof(DistanceMap), cudaMemcpyHostToDevice);
-
+	cudaMemcpy(devInitialDistanceMap, hostDistanceMap, sizeof(DistanceMap), cudaMemcpyHostToDevice);
+	
 	// スコアの直近の店までの距離を並列で計算
 	start = clock();
-	computeDistanceToStore<<<NUM_GPU_BLOCKS, NUM_GPU_THREADS>>>(devZoningPlan, devDistanceMap);
+	for (int iter = 0; iter < 1000; ++iter) {
+		computeDistanceToStore<<<NUM_GPU_BLOCKS, NUM_GPU_THREADS>>>(devZoningPlan, devDistanceMap);
+		//cudaDeviceSynchronize();
+	}
 	end = clock();
 	printf("computeDistanceToStore: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 
 	// 距離をCPUバッファへコピー
-	cudaMemcpy(hostDistanceMap, devDistanceMap, sizeof(DistanceMap), cudaMemcpyDeviceToHost);
+	CUDA_CALL(cudaMemcpy(hostDistanceMap, devDistanceMap, sizeof(DistanceMap), cudaMemcpyDeviceToHost));
 
 
 	
-	// シングルスレッドとマルチスレッドの結果を比較
-	for (int r = CITY_SIZE - 1; r >= 0; --r) {
-		for (int c = 0; c < CITY_SIZE; ++c) {
-			if (hostDistanceMap->distances[r][c][0] != hostDistanceMap2->distances[r][c][0]) {
-				printf("ERROR!\n");
+	// CPU版とマルチスレッドの結果を比較
+	{
+		bool err = false;
+		for (int r = CITY_SIZE - 1; r >= 0 && !err; --r) {
+			for (int c = 0; c < CITY_SIZE && !err; ++c) {
+				if (hostDistanceMap->distances[r][c][0] != hostDistanceMap2->distances[r][c][0]) {
+					err = true;
+					printf("ERROR! %d,%d\n", r, c);
+				}
 			}
 		}
 	}
-	printf("\n");
 
-	/*
-	for (int r = CITY_SIZE - 1; r >= 0; --r) {
-		for (int c = 0; c < CITY_SIZE; ++c) {
-			printf("%d, ", hostDistanceMap->distances[r][c][0]);
+	if (CITY_SIZE <= 8) {
+		for (int r = CITY_SIZE - 1; r >= 0; --r) {
+			for (int c = 0; c < CITY_SIZE; ++c) {
+				printf("%d, ", hostDistanceMap->distances[r][c][0]);
+			}
+			printf("\n");
+		}
+		printf("\n");
+
+		for (int r = CITY_SIZE - 1; r >= 0; --r) {
+			for (int c = 0; c < CITY_SIZE; ++c) {
+				printf("%d, ", hostDistanceMap2->distances[r][c][0]);
+			}
+			printf("\n");
 		}
 		printf("\n");
 	}
-	printf("\n");
-
-	for (int r = CITY_SIZE - 1; r >= 0; --r) {
-		for (int c = 0; c < CITY_SIZE; ++c) {
-			printf("%d, ", hostDistanceMap2->distances[r][c][0]);
-		}
-		printf("\n");
-	}
-	printf("\n");
-	*/
 
 
 	// デバイスバッファの開放

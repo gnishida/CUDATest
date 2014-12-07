@@ -14,7 +14,7 @@
     <CudaCompile Include="my_mcmc.cu" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{490D86C0-281A-4D84-863E-E8A77EE6F4AE}</ProjectGuid>
+    <ProjectGuid>{C93554BE-52CF-4ED4-A736-8C984705CEAF}</ProjectGuid>
     <RootNamespace>template_vs2010</RootNamespace>
     <ProjectName>my_mcmc</ProjectName>
     <CudaToolkitCustomDir />
