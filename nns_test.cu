@@ -63,7 +63,7 @@ float randf(unsigned int* randx, float a, float b) {
 }
 
 __host__ __device__
-float sampleFromCdf(unsigned int* randx, float* cdf, int num) {
+int sampleFromCdf(unsigned int* randx, float* cdf, int num) {
 	float rnd = randf(randx, 0, cdf[num-1]);
 
 	for (int i = 0; i < num; ++i) {
@@ -74,7 +74,7 @@ float sampleFromCdf(unsigned int* randx, float* cdf, int num) {
 }
 
 __host__ __device__
-float sampleFromPdf(unsigned int* randx, float* pdf, int num) {
+int sampleFromPdf(unsigned int* randx, float* pdf, int num) {
 	if (num == 0) return 0;
 
 	float cdf[40];
@@ -235,8 +235,8 @@ int main()
 	memset(hostDistanceMap2, 9999, sizeof(DistanceMap));
 
 	std::vector<float> zoneTypeDistribution(2);
-	zoneTypeDistribution[0] = 0.8;
-	zoneTypeDistribution[1] = 0.2;
+	zoneTypeDistribution[0] = 0.8f;
+	zoneTypeDistribution[1] = 0.2f;
 	
 	// 初期プランを生成
 	// 同時に、店の座標リストを作成

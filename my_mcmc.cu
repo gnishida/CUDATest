@@ -1,10 +1,9 @@
 ﻿/**
  * Nearest neighbor search
- * マップ内に店ゾーンが20%の確率で配備されている時、
- * 住宅ゾーンから直近の店ゾーンまでのマンハッタン距離を計算する。
- * Kd-treeなどのアルゴリズムだと、各住宅ゾーンから直近の店までの距離の計算にO(log M)。
- * 従って、全ての住宅ゾーンについて調べると、O(N log M)。
- * 一方、本実装では、各店ゾーンから周辺ゾーンに再帰的に距離を更新していくので、O(N)で済む。
+ * マップ内に、店、工場などのゾーンがある確率で配備されている時、
+ * 住宅ゾーンから直近の店、工場までのマンハッタン距離を計算する。
+ *
+ * 各店、工場から周辺に再帰的に距離を更新していくので、O(N)で済む。
  * しかも、GPUで並列化することで、さらに計算時間を短縮できる。
  */
 
@@ -17,7 +16,7 @@
 #define CITY_SIZE 400
 #define NUM_GPU_BLOCKS 4
 #define NUM_GPU_THREADS 32
-#define NUM_FEATURES 1
+#define NUM_FEATURES 5
 
 
 
@@ -45,6 +44,17 @@ struct Point2D {
 	Point2D(int x, int y) : x(x), y(y) {}
 };
 
+struct Point2DAndFeature {
+	int x;
+	int y;
+	int featureId;
+
+	__host__ __device__
+	Point2DAndFeature() : x(0), y(0), featureId(0) {}
+
+	__host__ __device__
+	Point2DAndFeature(int x, int y, int featureId) : x(x), y(y), featureId(featureId) {}
+};
 
 __host__ __device__
 unsigned int rand(unsigned int* randx) {
@@ -118,54 +128,58 @@ void generateZoningPlan(ZoningPlan& zoningPlan, std::vector<float> zoneTypeDistr
  */
 __global__
 void computeDistanceToStore(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
-	int idx = blockDim.x * blockIdx.x + threadIdx.x;
-
 	// キュー
-	Point2D queue[1000];
+	Point2DAndFeature queue[1000];
 	int queue_begin = 0;
 	int queue_end = 0;
 
-	int stride = ceilf((float)(CITY_SIZE * CITY_SIZE) / NUM_GPU_BLOCKS / NUM_GPU_THREADS);
+	int stride_features = ceilf((float)NUM_FEATURES / NUM_GPU_BLOCKS);
+	int stride_cells = ceilf((float)(CITY_SIZE * CITY_SIZE) / NUM_GPU_THREADS);
 	
 	// 分割された領域内で、店を探す
-	for (int i = 0; i < stride; ++i) {
-		int r = (idx * NUM_GPU_BLOCKS * NUM_GPU_THREADS + i) / CITY_SIZE;
-		int c = (idx * NUM_GPU_BLOCKS * NUM_GPU_THREADS + i) % CITY_SIZE;
+	for (int feature_offset = 0; feature_offset < stride_features; ++feature_offset) {
+		int feature_id = blockIdx.x * stride_features + feature_offset;
 
-		if (zoningPLan->zones[r][c].type == 1) {
-			queue[queue_end++] = Point2D(c, r);
-			distanceMap->distances[r][c][0] = 0;
+		for (int cell_offset = 0; cell_offset < stride_cells; ++cell_offset) {
+			int r = (threadIdx.x * stride_cells + cell_offset) / CITY_SIZE;
+			int c = (threadIdx.x * stride_cells + cell_offset) % CITY_SIZE;
+
+			if (zoningPLan->zones[r][c].type - 1 == feature_id) {
+				queue[queue_end++] = Point2DAndFeature(c, r, feature_id);
+				distanceMap->distances[r][c][feature_id] = 0;
+			}
 		}
 	}
 
+
 	// 距離マップを生成
 	while (queue_begin < queue_end) {
-		Point2D pt = queue[queue_begin++];
+		Point2DAndFeature pt = queue[queue_begin++];
 
-		int d = distanceMap->distances[pt.y][pt.x][0];
+		int d = distanceMap->distances[pt.y][pt.x][pt.featureId];
 
 		if (pt.y > 0) {
-			int old = atomicMin(&distanceMap->distances[pt.y-1][pt.x][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y-1][pt.x][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x, pt.y-1);
+				queue[queue_end++] = Point2DAndFeature(pt.x, pt.y-1, pt.featureId);
 			}
 		}
 		if (pt.y < CITY_SIZE - 1) {
-			int old = atomicMin(&distanceMap->distances[pt.y+1][pt.x][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y+1][pt.x][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x, pt.y+1);
+				queue[queue_end++] = Point2DAndFeature(pt.x, pt.y+1, pt.featureId);
 			}
 		}
 		if (pt.x > 0) {
-			int old = atomicMin(&distanceMap->distances[pt.y][pt.x-1][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y][pt.x-1][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x-1, pt.y);
+				queue[queue_end++] = Point2DAndFeature(pt.x-1, pt.y, pt.featureId);
 			}
 		}
 		if (pt.x < CITY_SIZE - 1) {
-			int old = atomicMin(&distanceMap->distances[pt.y][pt.x+1][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y][pt.x+1][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x+1, pt.y);
+				queue[queue_end++] = Point2DAndFeature(pt.x+1, pt.y, pt.featureId);
 			}
 		}
 	}
@@ -176,47 +190,53 @@ void computeDistanceToStore(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
  */
 __global__
 void computeDistanceToStoreBySingleThread(ZoningPlan* zoningPLan, DistanceMap* distanceMap) {
-	Point2D queue[1000];
+	// キュー
+	Point2DAndFeature queue[1000];
 	int queue_begin = 0;
 	int queue_end = 0;
+	
+	// 分割された領域内で、店を探す
+	for (int feature_id = 0; feature_id < NUM_FEATURES; ++feature_id) {
+		for (int cell_id = 0; cell_id < CITY_SIZE * CITY_SIZE; ++cell_id) {
+			int r = cell_id / CITY_SIZE;
+			int c = cell_id % CITY_SIZE;
 
-	for (int i = 0; i < CITY_SIZE * CITY_SIZE; ++i) {
-		int r = i / CITY_SIZE;
-		int c = i % CITY_SIZE;
-
-		if (zoningPLan->zones[r][c].type == 1) {
-			queue[queue_end++] = Point2D(c, r);
-			distanceMap->distances[r][c][0] = 0;
+			if (zoningPLan->zones[r][c].type - 1 == feature_id) {
+				queue[queue_end++] = Point2DAndFeature(c, r, feature_id);
+				distanceMap->distances[r][c][feature_id] = 0;
+			}
 		}
 	}
 
-	while (queue_begin < queue_end) {
-		Point2D pt = queue[queue_begin++];
 
-		int d = distanceMap->distances[pt.y][pt.x][0];
+	// 距離マップを生成
+	while (queue_begin < queue_end) {
+		Point2DAndFeature pt = queue[queue_begin++];
+
+		int d = distanceMap->distances[pt.y][pt.x][pt.featureId];
 
 		if (pt.y > 0) {
-			int old = atomicMin(&distanceMap->distances[pt.y-1][pt.x][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y-1][pt.x][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x, pt.y-1);
+				queue[queue_end++] = Point2DAndFeature(pt.x, pt.y-1, pt.featureId);
 			}
 		}
 		if (pt.y < CITY_SIZE - 1) {
-			int old = atomicMin(&distanceMap->distances[pt.y+1][pt.x][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y+1][pt.x][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x, pt.y+1);
+				queue[queue_end++] = Point2DAndFeature(pt.x, pt.y+1, pt.featureId);
 			}
 		}
 		if (pt.x > 0) {
-			int old = atomicMin(&distanceMap->distances[pt.y][pt.x-1][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y][pt.x-1][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x-1, pt.y);
+				queue[queue_end++] = Point2DAndFeature(pt.x-1, pt.y, pt.featureId);
 			}
 		}
 		if (pt.x < CITY_SIZE - 1) {
-			int old = atomicMin(&distanceMap->distances[pt.y][pt.x+1][0], d + 1);
+			int old = atomicMin(&distanceMap->distances[pt.y][pt.x+1][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2D(pt.x+1, pt.y);
+				queue[queue_end++] = Point2DAndFeature(pt.x+1, pt.y, pt.featureId);
 			}
 		}
 	}
@@ -235,26 +255,30 @@ int main()
 	memset(hostDistanceMap, 9999, sizeof(DistanceMap));
 	memset(hostDistanceMap2, 9999, sizeof(DistanceMap));
 
-	std::vector<float> zoneTypeDistribution(2);
-	zoneTypeDistribution[0] = 0.8f;
+	std::vector<float> zoneTypeDistribution(6);
+	zoneTypeDistribution[0] = 0.5f;
 	zoneTypeDistribution[1] = 0.2f;
+	zoneTypeDistribution[2] = 0.1f;
+	zoneTypeDistribution[3] = 0.1f;
+	zoneTypeDistribution[4] = 0.05f;
+	zoneTypeDistribution[5] = 0.05f;
 	
 	// 初期プランを生成
-	// 同時に、店の座標リストを作成
 	start = clock();
 	generateZoningPlan(*hostZoningPlan, zoneTypeDistribution);
 	end = clock();
 	printf("generateZoningPlan: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 	
-	/*
-	for (int r = CITY_SIZE - 1; r >= 0; --r) {
-		for (int c = 0; c < CITY_SIZE; ++c) {
-			printf("%d, ", hostZoningPlan->zones[r][c].type);
+	// デバッグ用
+	if (CITY_SIZE <= 8) {
+		for (int r = CITY_SIZE - 1; r >= 0; --r) {
+			for (int c = 0; c < CITY_SIZE; ++c) {
+				printf("%d, ", hostZoningPlan->zones[r][c].type);
+			}
+			printf("\n");
 		}
 		printf("\n");
 	}
-	printf("\n");
-	*/
 
 	// 初期プランをデバイスバッファへコピー
 	ZoningPlan* devZoningPlan;
@@ -307,30 +331,33 @@ int main()
 	// シングルスレッドとマルチスレッドの結果を比較
 	for (int r = CITY_SIZE - 1; r >= 0; --r) {
 		for (int c = 0; c < CITY_SIZE; ++c) {
-			if (hostDistanceMap->distances[r][c][0] != hostDistanceMap2->distances[r][c][0]) {
-				printf("ERROR!\n");
+			for (int k = 0; k < NUM_FEATURES; ++k) {
+				if (hostDistanceMap->distances[r][c][k] != hostDistanceMap2->distances[r][c][k]) {
+					printf("ERROR!\n");
+				}
 			}
 		}
 	}
 	printf("\n");
 
-	/*
-	for (int r = CITY_SIZE - 1; r >= 0; --r) {
-		for (int c = 0; c < CITY_SIZE; ++c) {
-			printf("%d, ", hostDistanceMap->distances[r][c][0]);
+	// デバッグ用
+	if (CITY_SIZE <= 8) {
+		for (int r = CITY_SIZE - 1; r >= 0; --r) {
+			for (int c = 0; c < CITY_SIZE; ++c) {
+				printf("%d, ", hostDistanceMap->distances[r][c][4]);
+			}
+			printf("\n");
 		}
 		printf("\n");
-	}
-	printf("\n");
 
-	for (int r = CITY_SIZE - 1; r >= 0; --r) {
-		for (int c = 0; c < CITY_SIZE; ++c) {
-			printf("%d, ", hostDistanceMap2->distances[r][c][0]);
+		for (int r = CITY_SIZE - 1; r >= 0; --r) {
+			for (int c = 0; c < CITY_SIZE; ++c) {
+				printf("%d, ", hostDistanceMap2->distances[r][c][4]);
+			}
+			printf("\n");
 		}
 		printf("\n");
 	}
-	printf("\n");
-	*/
 
 
 	// デバイスバッファの開放
