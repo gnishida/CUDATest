@@ -13,10 +13,11 @@
 #include <list>
 #include <time.h>
 
-#define CITY_SIZE 20
-#define NUM_GPU_BLOCKS 1
-#define NUM_GPU_THREADS 32
+#define CITY_SIZE 200
+#define NUM_GPU_BLOCKS 4
+#define NUM_GPU_THREADS 128
 #define NUM_FEATURES 5
+#define QUEUE_SIZE 3000
 
 #define CUDA_CALL(x) {if((x) != cudaSuccess){ \
   printf("CUDA error at %s:%d\n",__FILE__,__LINE__); \
@@ -127,72 +128,79 @@ void generateZoningPlan(ZoningPlan& zoningPlan, std::vector<float> zoneTypeDistr
 
 
 
-/**
- * 直近の店までの距離を計算する（マルチスレッド版）
- */
-__global__
-void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
-	// キュー
-	const int queue_size = 1300;
-	Point2DAndFeature queue[queue_size];
-	int queue_begin = 0;
-	int queue_end = 0;
 
-	int stride_features = ceilf((float)NUM_FEATURES / NUM_GPU_BLOCKS);
-	int stride_cells = ceilf((float)(CITY_SIZE * CITY_SIZE) / NUM_GPU_THREADS);
+__global__
+void initDistance(ZoningPlan* zoningPlan, DistanceMap* distanceMap, Point2DAndFeature* queue, int* queueEnd) {
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	queueEnd[idx] = 0;
+
+	int stride = ceilf((float)(CITY_SIZE * CITY_SIZE) / NUM_GPU_BLOCKS / NUM_GPU_THREADS);
 	
 	// 分割された領域内で、店を探す
-	for (int feature_offset = 0; feature_offset < stride_features; ++feature_offset) {
-		int feature_id = blockIdx.x * stride_features + feature_offset;
+	for (int i = 0; i < stride; ++i) {
+		int r = (idx * stride + i) / CITY_SIZE;
+		int c = (idx * stride + i) % CITY_SIZE;
+		if (r >= CITY_SIZE) continue;
 
-		for (int cell_offset = 0; cell_offset < stride_cells; ++cell_offset) {
-			int r = (threadIdx.x * stride_cells + cell_offset) / CITY_SIZE;
-			int c = (threadIdx.x * stride_cells + cell_offset) % CITY_SIZE;
-
+		for (int feature_id = 0; feature_id < NUM_FEATURES; ++feature_id) {
 			if (zoningPlan->zones[r][c].type - 1 == feature_id) {
-				queue[queue_end++] = Point2DAndFeature(c, r, feature_id);
+				queue[idx * QUEUE_SIZE + queueEnd[idx]++] = Point2DAndFeature(c, r, feature_id);
 				distanceMap->distances[r][c][feature_id] = 0;
 			} else {
 				distanceMap->distances[r][c][feature_id] = 9999;
 			}
-		}
-	}
 
-	__syncthreads();
+		}
+
+
+	}
+}
+
+
+
+/**
+ * 直近の店までの距離を計算する（マルチスレッド版）
+ */
+__global__
+void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap, Point2DAndFeature* queue, int* queueEnd) {
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+	int queue_begin = 0;
 
 	// 距離マップを生成
-	while (queue_begin < queue_end) {
-		Point2DAndFeature pt = queue[queue_begin++];
-		if (queue_begin >= queue_size) queue_begin = 0;
+	while (queue_begin < queueEnd[idx]) {
+		Point2DAndFeature pt = queue[idx * QUEUE_SIZE + queue_begin++];
+		if (queue_begin >= QUEUE_SIZE) queue_begin = 0;
 
 		int d = distanceMap->distances[pt.y][pt.x][pt.featureId];
 
 		if (pt.y > 0) {
 			int old = atomicMin(&distanceMap->distances[pt.y-1][pt.x][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2DAndFeature(pt.x, pt.y-1, pt.featureId);
-				if (queue_end >= queue_size) queue_end = 0;
+				queue[idx * QUEUE_SIZE + queueEnd[idx]++] = Point2DAndFeature(pt.x, pt.y-1, pt.featureId);
+				if (queueEnd[idx] >= QUEUE_SIZE) queueEnd[idx] = 0;
 			}
 		}
 		if (pt.y < CITY_SIZE - 1) {
 			int old = atomicMin(&distanceMap->distances[pt.y+1][pt.x][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2DAndFeature(pt.x, pt.y+1, pt.featureId);
-				if (queue_end >= queue_size) queue_end = 0;
+				queue[idx * QUEUE_SIZE + queueEnd[idx]++] = Point2DAndFeature(pt.x, pt.y+1, pt.featureId);
+				if (queueEnd[idx] >= QUEUE_SIZE) queueEnd[idx] = 0;
 			}
 		}
 		if (pt.x > 0) {
 			int old = atomicMin(&distanceMap->distances[pt.y][pt.x-1][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2DAndFeature(pt.x-1, pt.y, pt.featureId);
-				if (queue_end >= queue_size) queue_end = 0;
+				queue[idx * QUEUE_SIZE + queueEnd[idx]++] = Point2DAndFeature(pt.x-1, pt.y, pt.featureId);
+				if (queueEnd[idx] >= QUEUE_SIZE) queueEnd[idx] = 0;
 			}
 		}
 		if (pt.x < CITY_SIZE - 1) {
 			int old = atomicMin(&distanceMap->distances[pt.y][pt.x+1][pt.featureId], d + 1);
 			if (old > d + 1) {
-				queue[queue_end++] = Point2DAndFeature(pt.x+1, pt.y, pt.featureId);
-				if (queue_end >= queue_size) queue_end = 0;
+				queue[idx * QUEUE_SIZE + queueEnd[idx]++] = Point2DAndFeature(pt.x+1, pt.y, pt.featureId);
+				if (queueEnd[idx] >= QUEUE_SIZE) queueEnd[idx] = 0;
 			}
 		}
 	}
@@ -280,7 +288,7 @@ int main()
 	printf("generateZoningPlan: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 	
 	// デバッグ用
-	if (CITY_SIZE <= 50) {
+	if (CITY_SIZE <= 100) {
 		for (int r = CITY_SIZE - 1; r >= 0; --r) {
 			for (int c = 0; c < CITY_SIZE; ++c) {
 				printf("%d, ", hostZoningPlan->zones[r][c].type);
@@ -299,6 +307,13 @@ int main()
 	DistanceMap* devDistanceMap;
 	CUDA_CALL(cudaMalloc((void**)&devDistanceMap, sizeof(DistanceMap)));
 
+	// キュー用にデバイスバッファを確保
+	Point2DAndFeature* devQueue;
+	CUDA_CALL(cudaMalloc((void**)&devQueue, sizeof(Point2DAndFeature) * QUEUE_SIZE * NUM_GPU_BLOCKS * NUM_GPU_THREADS));
+	int* devQueueEnd;
+	CUDA_CALL(cudaMalloc((void**)&devQueueEnd, sizeof(int) * NUM_GPU_BLOCKS * NUM_GPU_THREADS));
+
+
 
 	///////////////////////////////////////////////////////////////////////
 	// CPU版で、直近の店までの距離を計算
@@ -309,11 +324,19 @@ int main()
 	end = clock();
 	printf("computeDistanceToStore CPU: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 
+
+
+
+
+
+
 	///////////////////////////////////////////////////////////////////////
 	// マルチスレッドで、直近の店までの距離を計算
 	start = clock();
 	for (int iter = 0; iter < 1000; ++iter) {
-		computeDistanceToStore<<<NUM_GPU_BLOCKS, NUM_GPU_THREADS>>>(devZoningPlan, devDistanceMap);
+		initDistance<<<NUM_GPU_BLOCKS, NUM_GPU_THREADS>>>(devZoningPlan, devDistanceMap, devQueue, devQueueEnd);
+		cudaDeviceSynchronize();
+		computeDistanceToStore<<<NUM_GPU_BLOCKS, NUM_GPU_THREADS>>>(devZoningPlan, devDistanceMap, devQueue, devQueueEnd);
 		cudaDeviceSynchronize();
 	}
 	end = clock();
@@ -325,26 +348,29 @@ int main()
 
 	
 	// CPU版とマルチスレッドの結果を比較
-	{
-		bool err = false;
+	int bad_k = 0;
+	bool err = false;
+	{	
 		for (int r = CITY_SIZE - 1; r >= 0 && !err; --r) {
 			for (int c = 0; c < CITY_SIZE && !err; ++c) {
-				for (int k = 0; k < NUM_FEATURES; ++k) {
+				for (int k = 0; k < NUM_FEATURES && !err; ++k) {
 					if (hostDistanceMap->distances[r][c][k] != hostDistanceMap2->distances[r][c][k]) {
 						err = true;
-						printf("ERROR! %d,%d %d\n", r, c, k);
+						printf("ERROR! %d,%d k=%d, %d != %d\n", r, c, k, hostDistanceMap->distances[r][c][k], hostDistanceMap2->distances[r][c][k]);
+						bad_k = k;
 					}
 				}
 			}
+
 		}
 	}
 
 
 	// デバッグ用
-	if (CITY_SIZE <= 50) {
+	if (CITY_SIZE <= 100 && err) {
 		for (int r = CITY_SIZE - 1; r >= 0; --r) {
 			for (int c = 0; c < CITY_SIZE; ++c) {
-				printf("%d, ", hostDistanceMap->distances[r][c][4]);
+				printf("%d, ", hostDistanceMap->distances[r][c][bad_k]);
 			}
 			printf("\n");
 		}
@@ -352,7 +378,7 @@ int main()
 
 		for (int r = CITY_SIZE - 1; r >= 0; --r) {
 			for (int c = 0; c < CITY_SIZE; ++c) {
-				printf("%d, ", hostDistanceMap2->distances[r][c][4]);
+				printf("%d, ", hostDistanceMap2->distances[r][c][bad_k]);
 			}
 			printf("\n");
 		}
