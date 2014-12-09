@@ -10,6 +10,12 @@
   CPU版: 18秒
   CUDA版: 5.7秒
 
+- shared_zone
+  shared memoryを使用してみよう！
+  
+  CPU版: 18秒
+  GPU版: 0.016秒
+
 - my_mcmc
   complex_zoneを元に、MCMCを実装しかけ。
   complex_zoneをだいぶ変えたので、もはや一からやり直しだね。
