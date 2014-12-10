@@ -17,10 +17,10 @@
 
 #define CITY_SIZE 200
 #define GPU_BLOCK_SIZE 40
-#define GPU_NUM_THREADS 128
-#define GPU_BLOCK_SCALE 1
-#define NUM_FEATURES 5
-#define QUEUE_MAX 1299
+#define GPU_NUM_THREADS 96
+#define GPU_BLOCK_SCALE (1.1)
+#define NUM_FEATURES 1
+#define QUEUE_MAX 799
 
 #define CUDA_CALL(x) {if((x) != cudaSuccess){ \
   printf("CUDA error at %s:%d\n",__FILE__,__LINE__); \
@@ -124,7 +124,7 @@ void generateZoningPlan(ZoningPlan& zoningPlan, std::vector<float> zoneTypeDistr
  */
 __global__
 void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
-	__shared__ int sDist[GPU_BLOCK_SIZE * GPU_BLOCK_SCALE][GPU_BLOCK_SIZE * GPU_BLOCK_SCALE][NUM_FEATURES];
+	__shared__ int sDist[(int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE)][(int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE)][NUM_FEATURES];
 	__shared__ uint3 sQueue[QUEUE_MAX + 1];
 	__shared__ unsigned int queue_begin;
 	__shared__ unsigned int queue_end;
@@ -138,8 +138,8 @@ void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 	int r0 = blockIdx.y * GPU_BLOCK_SIZE - GPU_BLOCK_SIZE * (GPU_BLOCK_SCALE - 1) * 0.5;
 	int c0 = blockIdx.x * GPU_BLOCK_SIZE - GPU_BLOCK_SIZE * (GPU_BLOCK_SCALE - 1) * 0.5;
 	for (int i = 0; i < num_strides; ++i) {
-		int r1 = (i * GPU_NUM_THREADS + threadIdx.x) / GPU_BLOCK_SIZE / GPU_BLOCK_SCALE;
-		int c1 = (i * GPU_NUM_THREADS + threadIdx.x) % (GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
+		int r1 = (i * GPU_NUM_THREADS + threadIdx.x) / (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
+		int c1 = (i * GPU_NUM_THREADS + threadIdx.x) % (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
 
 		// これ、忘れてた！！
 		if (r1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE || c1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE) continue;
@@ -204,8 +204,8 @@ void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 
 	// global memoryの距離マップへ、コピーする
 	for (int i = 0; i < num_strides; ++i) {
-		int r1 = (i * GPU_NUM_THREADS + threadIdx.x) / GPU_BLOCK_SIZE / GPU_BLOCK_SCALE;
-		int c1 = (i * GPU_NUM_THREADS + threadIdx.x) % (GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
+		int r1 = (i * GPU_NUM_THREADS + threadIdx.x) / (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
+		int c1 = (i * GPU_NUM_THREADS + threadIdx.x) % (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
 
 		// これ、忘れてた！！
 		if (r1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE || c1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE) continue;
@@ -344,7 +344,7 @@ int main()
 
 	// マルチスレッドで、直近の店までの距離を計算
 	start = clock();
-	for (int iter = 0; iter < 1000; ++iter) {
+	for (int iter = 0; iter < 5000; ++iter) {
 		computeDistanceToStore<<<dim3(CITY_SIZE / GPU_BLOCK_SIZE, CITY_SIZE / GPU_BLOCK_SIZE), GPU_NUM_THREADS>>>(devZoningPlan, devDistanceMap);
 		cudaDeviceSynchronize();
 	}
