@@ -19,7 +19,7 @@
 #define GPU_BLOCK_SIZE 40
 #define GPU_NUM_THREADS 96
 #define GPU_BLOCK_SCALE (1.1)
-#define NUM_FEATURES 1
+#define NUM_FEATURES 5
 #define QUEUE_MAX 799
 
 #define CUDA_CALL(x) {if((x) != cudaSuccess){ \
@@ -344,7 +344,7 @@ int main()
 
 	// マルチスレッドで、直近の店までの距離を計算
 	start = clock();
-	for (int iter = 0; iter < 5000; ++iter) {
+	for (int iter = 0; iter < 1000; ++iter) {
 		computeDistanceToStore<<<dim3(CITY_SIZE / GPU_BLOCK_SIZE, CITY_SIZE / GPU_BLOCK_SIZE), GPU_NUM_THREADS>>>(devZoningPlan, devDistanceMap);
 		cudaDeviceSynchronize();
 	}
