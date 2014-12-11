@@ -241,105 +241,6 @@ void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 	}
 }
 
-/**
- * 直近の店までの距離を計算する（マルチスレッド版、shared memory使用）
- */
-__global__
-void computeDistanceToStore2(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
-	__shared__ int sDist[(int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE)][(int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE)][NUM_FEATURES];
-	__shared__ uint3 sQueue[QUEUE_MAX + 1];
-	__shared__ unsigned int queue_begin;
-	__shared__ unsigned int queue_end;
-
-	queue_begin = 0;
-	queue_end = 0;
-	__syncthreads();
-
-	// global memoryからshared memoryへコピー
-	int num_strides = (GPU_BLOCK_SIZE * GPU_BLOCK_SIZE * GPU_BLOCK_SCALE * GPU_BLOCK_SCALE + GPU_NUM_THREADS - 1) / GPU_NUM_THREADS;
-	int r0 = blockIdx.y * GPU_BLOCK_SIZE - GPU_BLOCK_SIZE * (GPU_BLOCK_SCALE - 1) * 0.5;
-	int c0 = blockIdx.x * GPU_BLOCK_SIZE - GPU_BLOCK_SIZE * (GPU_BLOCK_SCALE - 1) * 0.5;
-	for (int i = 0; i < num_strides; ++i) {
-		int r1 = (i * GPU_NUM_THREADS + threadIdx.x) / (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
-		int c1 = (i * GPU_NUM_THREADS + threadIdx.x) % (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
-
-		// これ、忘れてた！！
-		if (r1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE || c1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE) continue;
-
-		int type = 0;
-		if (r0 + r1 >= 0 && r0 + r1 < CITY_SIZE && c0 + c1 >= 0 && c0 + c1 < CITY_SIZE) {
-			type = zoningPlan->zones[r0 + r1][c0 + c1].type;
-		}
-		for (int feature_id = 0; feature_id < NUM_FEATURES; ++feature_id) {
-			distanceMap->distances[r0 + r1][c0 + c1][feature_id] = MAX_DIST;
-			if (type - 1 == feature_id) {
-				sDist[r1][c1][feature_id] = 0;
-				unsigned int q_index = atomicInc(&queue_end, QUEUE_MAX);
-				sQueue[q_index] = make_uint3(c1, r1, feature_id);
-			} else {
-				sDist[r1][c1][feature_id] = MAX_DIST;
-			}
-		}
-	}
-	__syncthreads();
-
-	// 距離マップを生成
-	unsigned int q_index;
-	while ((q_index = atomicInc(&queue_begin, QUEUE_MAX)) < queue_end) {
-	//while (queue_begin < queue_end) {
-		uint3 pt = sQueue[q_index];
-		if (pt.x < 0 || pt.x >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE || pt.y < 0 || pt.y >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE) continue;
-
-		int d = sDist[pt.y][pt.x][pt.z];
-
-		if (pt.y > 0) {
-			unsigned int old = atomicMin(&sDist[pt.y-1][pt.x][pt.z], d + 1);
-			if (old > d + 1) {
-				q_index = atomicInc(&queue_end, QUEUE_MAX);
-				sQueue[q_index] = make_uint3(pt.x, pt.y-1, pt.z);
-			}
-		}
-		if (pt.y < CITY_SIZE - 1) {
-			unsigned int old = atomicMin(&sDist[pt.y+1][pt.x][pt.z], d + 1);
-			if (old > d + 1) {
-				q_index = atomicInc(&queue_end, QUEUE_MAX);
-				sQueue[q_index] = make_uint3(pt.x, pt.y+1, pt.z);
-			}
-		}
-		if (pt.x > 0) {
-			unsigned int old = atomicMin(&sDist[pt.y][pt.x-1][pt.z], d + 1);
-			if (old > d + 1) {
-				q_index = atomicInc(&queue_end, QUEUE_MAX);
-				sQueue[q_index] = make_uint3(pt.x-1, pt.y, pt.z);
-			}
-		}
-		if (pt.x < CITY_SIZE - 1) {
-			unsigned int old = atomicMin(&sDist[pt.y][pt.x+1][pt.z], d + 1);
-			if (old > d + 1) {
-				q_index = atomicInc(&queue_end, QUEUE_MAX);
-				sQueue[q_index] = make_uint3(pt.x+1, pt.y, pt.z);
-			}
-		}
-	}
-
-	__syncthreads();
-
-	// global memoryの距離マップへ、コピーする
-	for (int i = 0; i < num_strides; ++i) {
-		int r1 = (i * GPU_NUM_THREADS + threadIdx.x) / (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
-		int c1 = (i * GPU_NUM_THREADS + threadIdx.x) % (int)(GPU_BLOCK_SIZE * GPU_BLOCK_SCALE);
-
-		// これ、忘れてた！！
-		if (r1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE || c1 >= GPU_BLOCK_SIZE * GPU_BLOCK_SCALE) continue;
-
-		if (r0 + r1 >= 0 && r0 + r1 < CITY_SIZE && c0 + c1 >= 0 && c0 + c1 < CITY_SIZE) {
-			for (int feature_id = 0; feature_id < NUM_FEATURES; ++feature_id) {
-				atomicMin(&distanceMap->distances[r0 + r1][c0 + c1][feature_id], sDist[r1][c1][feature_id]);
-			}
-		}
-	}
-}
-
 __device__
 float min3(int distToStore, int distToAmusement, int distToFactory) {
 	return min(min(distToStore, distToAmusement), distToFactory);
@@ -640,7 +541,7 @@ int main()
 	printf("computeDistanceToStore GPU: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 
 	// 距離をCPUバッファへコピー
-	computeDistanceToStore2<<<dim3(CITY_SIZE / GPU_BLOCK_SIZE, CITY_SIZE / GPU_BLOCK_SIZE), GPU_NUM_THREADS>>>(devZoningPlan, devDistanceMap);
+	computeDistanceToStore<<<dim3(CITY_SIZE / GPU_BLOCK_SIZE, CITY_SIZE / GPU_BLOCK_SIZE), GPU_NUM_THREADS>>>(devZoningPlan, devDistanceMap);
 	CUDA_CALL(cudaMemcpy(hostDistanceMap, devDistanceMap, sizeof(DistanceMap), cudaMemcpyDeviceToHost));
 
 	for (int r = CITY_SIZE - 1; r >= 0; --r) {
