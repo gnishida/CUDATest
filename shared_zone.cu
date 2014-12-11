@@ -15,12 +15,13 @@
 #include <list>
 #include <time.h>
 
-#define CITY_SIZE 200
-#define GPU_BLOCK_SIZE 40
-#define GPU_NUM_THREADS 96
-#define GPU_BLOCK_SCALE (1.1)
+#define CITY_SIZE 20 //200
+#define GPU_BLOCK_SIZE 20//40
+#define GPU_NUM_THREADS 32//96
+#define GPU_BLOCK_SCALE (1.0)//(1.1)
 #define NUM_FEATURES 5
-#define QUEUE_MAX 799
+#define QUEUE_MAX 1999
+#define MAX_DIST 99
 
 #define CUDA_CALL(x) {if((x) != cudaSuccess){ \
   printf("CUDA error at %s:%d\n",__FILE__,__LINE__); \
@@ -134,7 +135,7 @@ void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 	__syncthreads();
 
 	// global memoryからshared memoryへコピー
-	int num_strides = (GPU_BLOCK_SIZE * GPU_BLOCK_SIZE * 4 + GPU_NUM_THREADS - 1) / GPU_NUM_THREADS;
+	int num_strides = (GPU_BLOCK_SIZE * GPU_BLOCK_SIZE * GPU_BLOCK_SCALE * GPU_BLOCK_SCALE + GPU_NUM_THREADS - 1) / GPU_NUM_THREADS;
 	int r0 = blockIdx.y * GPU_BLOCK_SIZE - GPU_BLOCK_SIZE * (GPU_BLOCK_SCALE - 1) * 0.5;
 	int c0 = blockIdx.x * GPU_BLOCK_SIZE - GPU_BLOCK_SIZE * (GPU_BLOCK_SCALE - 1) * 0.5;
 	for (int i = 0; i < num_strides; ++i) {
@@ -149,13 +150,13 @@ void computeDistanceToStore(ZoningPlan* zoningPlan, DistanceMap* distanceMap) {
 			type = zoningPlan->zones[r0 + r1][c0 + c1].type;
 		}
 		for (int feature_id = 0; feature_id < NUM_FEATURES; ++feature_id) {
-			distanceMap->distances[r0 + r1][c0 + c1][feature_id] = 9;
+			distanceMap->distances[r0 + r1][c0 + c1][feature_id] = MAX_DIST;
 			if (type - 1 == feature_id) {
 				sDist[r1][c1][feature_id] = 0;
 				unsigned int q_index = atomicInc(&queue_end, QUEUE_MAX);
 				sQueue[q_index] = make_uint3(c1, r1, feature_id);
 			} else {
-				sDist[r1][c1][feature_id] = 99;
+				sDist[r1][c1][feature_id] = MAX_DIST;
 			}
 		}
 	}
@@ -234,7 +235,7 @@ void computeDistanceToStoreCPU(ZoningPlan* zoningPLan, DistanceMap* distanceMap)
 				queue.push_back(make_int3(c, r, feature_id));
 				distanceMap->distances[r][c][feature_id] = 0;
 			} else {
-				distanceMap->distances[r][c][feature_id] = 9999;
+				distanceMap->distances[r][c][feature_id] = MAX_DIST;
 			}
 		}
 	}
@@ -272,6 +273,40 @@ void computeDistanceToStoreCPU(ZoningPlan* zoningPLan, DistanceMap* distanceMap)
 	}
 }
 
+/**
+ * デバッグ用に、ゾーンプランを表示する。
+ */
+__host__
+void showDevZoningPlan(ZoningPlan* zoningPlan) {
+	ZoningPlan plan;
+
+	CUDA_CALL(cudaMemcpy(&plan, zoningPlan, sizeof(ZoningPlan), cudaMemcpyDeviceToHost));
+	for (int r = CITY_SIZE - 1; r >= 0; --r) {
+		for (int c = 0; c < CITY_SIZE; ++c) {
+			printf("%d, ", plan.zones[r][c].type);
+		}
+		printf("\n");
+	}
+	printf("\n");
+}
+
+/**
+ * デバッグ用に、ゾーンプランを表示する。
+ */
+__host__
+void showDevDistMap(DistanceMap* distMap, int feature_id) {
+	DistanceMap map;
+
+	CUDA_CALL(cudaMemcpy(&map, distMap, sizeof(DistanceMap), cudaMemcpyDeviceToHost));
+	for (int r = CITY_SIZE - 1; r >= 0; --r) {
+		for (int c = 0; c < CITY_SIZE; ++c) {
+			printf("%d, ", map.distances[r][c][feature_id]);
+		}
+		printf("\n");
+	}
+	printf("\n");
+}
+
 int main()
 {
 	time_t start, end;
@@ -282,8 +317,8 @@ int main()
 	DistanceMap* hostDistanceMap2 = (DistanceMap*)malloc(sizeof(DistanceMap));
 
 	// 距離を初期化
-	//memset(hostDistanceMap, 99, sizeof(DistanceMap));
-	//memset(hostDistanceMap2, 99, sizeof(DistanceMap));
+	//memset(hostDistanceMap, MAX_DIST, sizeof(DistanceMap));
+	//memset(hostDistanceMap2, MAX_DIST, sizeof(DistanceMap));
 
 	std::vector<float> zoneTypeDistribution(6);
 	zoneTypeDistribution[0] = 0.5f;
@@ -299,26 +334,19 @@ int main()
 	end = clock();
 	printf("generateZoningPlan: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 	
-	// デバッグ用
-	if (CITY_SIZE <= 100) {
-		for (int r = CITY_SIZE - 1; r >= 0; --r) {
-			for (int c = 0; c < CITY_SIZE; ++c) {
-				printf("%d, ", hostZoningPlan->zones[r][c].type);
-			}
-			printf("\n");
-		}
-		printf("\n");
-	}
-
 	// 初期プランをデバイスバッファへコピー
 	ZoningPlan* devZoningPlan;
 	CUDA_CALL(cudaMalloc((void**)&devZoningPlan, sizeof(ZoningPlan)));
 	CUDA_CALL(cudaMemcpy(devZoningPlan, hostZoningPlan, sizeof(ZoningPlan), cudaMemcpyHostToDevice));
 
+	// デバッグ用に、初期プランを表示
+	if (CITY_SIZE <= 100) {
+		showDevZoningPlan(devZoningPlan);
+	}
+
 	// 距離マップ用に、デバイスバッファを確保
 	DistanceMap* devDistanceMap;
 	CUDA_CALL(cudaMalloc((void**)&devDistanceMap, sizeof(DistanceMap)));
-
 
 	///////////////////////////////////////////////////////////////////////
 	// CPU版で、直近の店までの距離を計算
@@ -351,10 +379,30 @@ int main()
 	end = clock();
 	printf("computeDistanceToStore GPU: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 
-	// 距離をCPUバッファへコピー
-	CUDA_CALL(cudaMemcpy(hostDistanceMap, devDistanceMap, sizeof(DistanceMap), cudaMemcpyDeviceToHost));
 
-	
+
+
+	// テンポラリ　デバッグ用
+	// バグの対処中。。。。
+	FILE* fp = fopen("zone.txt", "r");
+	for (int r = 0; r < CITY_SIZE; ++r) {
+		for (int c = 0; c < CITY_SIZE; ++c) {
+			fscanf(fp, "%d,", &hostZoningPlan->zones[r][c].type);
+		}
+	}
+	CUDA_CALL(cudaMemcpy(devZoningPlan, hostZoningPlan, sizeof(ZoningPlan), cudaMemcpyHostToDevice));
+	showDevZoningPlan(devZoningPlan);
+	computeDistanceToStore<<<dim3(CITY_SIZE / GPU_BLOCK_SIZE, CITY_SIZE / GPU_BLOCK_SIZE), GPU_NUM_THREADS>>>(devZoningPlan, devDistanceMap);
+	cudaDeviceSynchronize();
+
+
+
+
+	// 距離マップを表示
+	showDevDistMap(devDistanceMap, 1);
+
+
+
 	/*
 	// compare the results with the CPU version of the exact algrotihm
 	int bad_k = 0;

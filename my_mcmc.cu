@@ -542,6 +542,7 @@ int main()
 
 	// 距離をCPUバッファへコピー
 	computeDistanceToStore<<<dim3(CITY_SIZE / GPU_BLOCK_SIZE, CITY_SIZE / GPU_BLOCK_SIZE), GPU_NUM_THREADS>>>(devZoningPlan, devDistanceMap);
+cudaDeviceSynchronize();
 	CUDA_CALL(cudaMemcpy(hostDistanceMap, devDistanceMap, sizeof(DistanceMap), cudaMemcpyDeviceToHost));
 
 	for (int r = CITY_SIZE - 1; r >= 0; --r) {
@@ -560,6 +561,16 @@ int main()
 		}
 		printf("\n");
 	}
+
+	FILE* fp = fopen("zone.txt", "w");
+	for (int r = 0; r < CITY_SIZE; ++r) {
+		for (int c = 0; c < CITY_SIZE; ++c) {
+			fprintf(fp, "%d,", hostZoningPlan->zones[r][c].type);
+		}
+		fprintf(fp, "\n");
+	}
+	fclose(fp);
+
 
 
 	// ゾーンプランをスコアを表示
