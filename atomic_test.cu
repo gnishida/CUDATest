@@ -8,11 +8,8 @@
 #include <list>
 #include <time.h>
 
-#define CITY_SIZE 20
-#define GPU_BLOCK_SIZE 20
 #define GPU_NUM_THREADS 16
-#define NUM_FEATURES 1
-#define QUEUE_MAX 1999
+#define QUEUE_MAX 39
 
 #define CUDA_CALL(x) {if((x) != cudaSuccess){ \
   printf("CUDA error at %s:%d\n",__FILE__,__LINE__); \
@@ -31,37 +28,36 @@ __global__
 void test(int* results) {
 	__shared__ int sQueue[QUEUE_MAX + 1];
 	__shared__ unsigned int queue_begin;
-	__shared__ unsigned int queue_end;
 
-	queue_begin = 0;
-	queue_end = 0;
+	for (int i = threadIdx.x; i < QUEUE_MAX + 1; i += GPU_NUM_THREADS) {
+		sQueue[i] = 99;
+	}
+
+	queue_begin = 35;
 	__syncthreads();
 
-	// global memoryからshared memoryへコピー
-	unsigned int q_index = atomicInc(&queue_end, QUEUE_MAX);
-	sQueue[q_index] = threadIdx.x;
-	__syncthreads();
-
-	while ((q_index = atomicInc(&queue_begin, QUEUE_MAX)) < queue_end) {
-		int id = sQueue[q_index];
-		results[threadIdx.x] = id;
+	for (int i = 0; i < 1; ++i) {
+		unsigned int q_index = atomicInc(&queue_begin, QUEUE_MAX);
+		sQueue[q_index] = threadIdx.x;
+	}
+	
+	for (int i = threadIdx.x; i < QUEUE_MAX + 1; i += GPU_NUM_THREADS) {
+		results[i] = sQueue[i];
 	}
 
 }
 
 int main()
 {
-	time_t start, end;
-
-	int* hostResults = (int*)malloc(sizeof(int) * 32);
+	int* hostResults = (int*)malloc(sizeof(int) * (QUEUE_MAX + 1));
 	int* devResults;
-	CUDA_CALL(cudaMalloc((void**)&devResults, sizeof(int) * 32));
-	test<<<1, 32>>>(devResults);
+	CUDA_CALL(cudaMalloc((void**)&devResults, sizeof(int) * (QUEUE_MAX + 1)));
+	test<<<1, GPU_NUM_THREADS>>>(devResults);
 
-	CUDA_CALL(cudaMemcpy(hostResults, devResults, sizeof(int) * 32, cudaMemcpyDeviceToHost));
+	CUDA_CALL(cudaMemcpy(hostResults, devResults, sizeof(int) * (QUEUE_MAX + 1), cudaMemcpyDeviceToHost));
 
-	for (int i = 0; i < 32; ++i) {
-		printf("%d\n", hostResults[i]);
+	for (int i = 0; i < QUEUE_MAX + 1; ++i) {
+		printf("%2d: %2d\n", i, hostResults[i]);
 	}
 	// デバイスバッファの開放
 	cudaFree(devResults);
