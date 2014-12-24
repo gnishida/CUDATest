@@ -1,9 +1,11 @@
 ﻿#include <stdio.h>
+#include <vector>
 
 #define CITY_SIZE 200 //200
 #define BLOCK_SIZE 40 //200
 #define NUM_THREADS 32
 #define MAX_ITERATIONS 1000
+#define QUEUE_MAX 39999
 
 __global__
 void testShared(int* zone, int* dist) {
@@ -122,6 +124,117 @@ void testCPU(int* zone, int* dist) {
 	}
 }
 
+__global__
+void testQueueGlobal(int* zone, int* dist, int* queue, unsigned int* q_head, unsigned int* q_tail) {
+	int x0 = blockIdx.x * BLOCK_SIZE;
+	int y0 = blockIdx.y * BLOCK_SIZE;
+
+	int stride = BLOCK_SIZE * BLOCK_SIZE / NUM_THREADS;
+	int x = threadIdx.x * stride % BLOCK_SIZE;
+	int y = threadIdx.x * stride / BLOCK_SIZE;
+
+	unsigned int q_index = atomicInc(q_tail, QUEUE_MAX);
+	queue[q_index] = x + x0 + (y + y0) * CITY_SIZE;
+	dist[x + x0 + (y + y0) * CITY_SIZE] = 0;
+
+	__syncthreads();
+
+	while (true) {
+		int q_index = atomicInc(q_head, QUEUE_MAX);
+		int s = queue[q_index];
+		if (s == -1) break;
+
+		int x = s % CITY_SIZE;
+		int y = s / CITY_SIZE;
+		int d = dist[s];
+
+		if (x > 0) {
+			int old = atomicMin(&dist[s - 1], d + 1);
+			if (old > d + 1) {
+				unsigned int q_index2 = atomicInc(q_tail, QUEUE_MAX);
+				queue[q_index2] = s - 1;
+			}
+		}
+		if (x < CITY_SIZE - 1) {
+			int old = atomicMin(&dist[s + 1], d + 1);
+			if (old > d + 1) {
+				unsigned int q_index2 = atomicInc(q_tail, QUEUE_MAX);
+				queue[q_index2] = s + 1;
+			}
+		}
+		if (y > 0) {
+			int old = atomicMin(&dist[s - CITY_SIZE], d + 1);
+			if (old > d + 1) {
+				unsigned int q_index2 = atomicInc(q_tail, QUEUE_MAX);
+				queue[q_index2] = s - CITY_SIZE;
+			}
+		}
+		if (y < CITY_SIZE - 1) {
+			int old = atomicMin(&dist[s + CITY_SIZE], d + 1);
+			if (old > d + 1) {
+				unsigned int q_index2 = atomicInc(q_tail, QUEUE_MAX);
+				queue[q_index2] = s + CITY_SIZE;
+			}
+		}
+
+		queue[q_index] = -1;
+	}
+}
+
+__host__
+void testQueueCPU(int* zone, int* dist) {
+	std::vector<int> queue(QUEUE_MAX + 1);
+	unsigned int q_head = 0;
+	unsigned int q_tail = 0;
+
+	for (int i = 0; i < QUEUE_MAX + 1; ++i) queue[i] = -1;
+
+	for (int i = 0; i < 10; ++i) {
+		int stride = CITY_SIZE * CITY_SIZE / 10;
+		int x = i * stride % CITY_SIZE;
+		int y = i * stride / CITY_SIZE;
+		
+		queue[q_tail++] = x + y * CITY_SIZE;
+		dist[x + y * CITY_SIZE] = 0;
+	}
+
+	while (true) {
+		int s = queue[q_head];
+		if (s == -1) break;
+
+		int x = s % CITY_SIZE;
+		int y = s / CITY_SIZE;
+		int d = dist[s];
+
+		if (x > 0) {
+			if (dist[s - 1] > d + 1) {
+				dist[s - 1] = d + 1;
+				queue[q_tail++] = s - 1;
+			}
+		}
+		if (x < CITY_SIZE - 1) {
+			if (dist[s + 1] > d + 1) {
+				dist[s + 1] = d + 1;
+				queue[q_tail++] = s + 1;
+			}
+		}
+		if (y > 0) {
+			if (dist[s - CITY_SIZE] > d + 1) {
+				dist[s - CITY_SIZE] = d + 1;
+				queue[q_tail++] = s - CITY_SIZE;
+			}
+		}
+		if (y < CITY_SIZE - 1) {
+			if (dist[s + CITY_SIZE] > d + 1) {
+				dist[s + CITY_SIZE] = d + 1;
+				queue[q_tail++] = s + CITY_SIZE;
+			}
+		}
+
+		queue[q_head++] = -1;
+	}
+}
+
 __host__
 void showZone(int* devZone) {
 	int* zone;
@@ -201,4 +314,36 @@ int main(int argc, char **argv) {
 	printf("CPU: %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 	//showZone(devZone);
 	//showDist(devDist);
+
+
+
+	int* devQueue;
+	cudaMalloc((void**)&devQueue, sizeof(int) * (QUEUE_MAX + 1));
+	unsigned int* devQueueHead;
+	cudaMalloc((void**)&devQueueHead, sizeof(unsigned int));
+	unsigned int* devQueueTail;
+	cudaMalloc((void**)&devQueueTail, sizeof(unsigned int));
+	
+	start = clock();
+	for (int iter = 0; iter < MAX_ITERATIONS; ++iter) {
+		cudaMemset(devQueue, -1, sizeof(int) * (QUEUE_MAX + 1));
+		cudaMemset(devDist, 99, sizeof(int) * CITY_SIZE * CITY_SIZE);
+		cudaMemset(devQueueHead, 0, sizeof(unsigned int));
+		cudaMemset(devQueueTail, 0, sizeof(unsigned int));
+		testQueueGlobal<<<dim3(CITY_SIZE / BLOCK_SIZE, CITY_SIZE / BLOCK_SIZE), NUM_THREADS>>>(devZone, devDist, devQueue, devQueueHead, devQueueTail);
+		cudaThreadSynchronize();
+	}
+	end = clock();
+	printf("GPU (global): %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
+
+	start = clock();
+	for (int iter = 0; iter < MAX_ITERATIONS; ++iter) {
+		cudaMemset(devQueue, -1, sizeof(int) * (QUEUE_MAX + 1));
+		cudaMemset(devDist, 99, sizeof(int) * CITY_SIZE * CITY_SIZE);
+		cudaMemset(devQueueTail, 0, sizeof(unsigned int));
+		testQueueCPU(hostZone, hostDist);
+		cudaThreadSynchronize();
+	}
+	end = clock();
+	printf("GPU (global): %lf\n", (double)(end-start)/CLOCKS_PER_SEC);
 }
