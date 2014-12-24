@@ -34,10 +34,13 @@ void test(int* results) {
 
 
 	for (int i = 0; i < 10; ++i) {
-		do {} while (atomicCAS(&lock, 0, 1));
-		results[q_tail] = threadIdx.x;
-		q_tail++;
+		do {
+
+		} while (atomicCAS(&lock, 0, 1));
+		int q_index = atomicInc(q_tail, 99999);
 		lock = 0;
+
+		results[q_index] = threadIdx.x;
 	}
 }
 
