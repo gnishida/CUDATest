@@ -19,16 +19,14 @@
 
 
 
-
+__device__ int lock = 0;
 
 /**
  * 直近の店までの距離を計算する（マルチスレッド版、shared memory使用）
  */
 __global__
 void test(int* results) {
-	__shared__ int lock;
 	__shared__ int q_tail;
-	lock = 0;
 	q_tail = 0;
 	__syncthreads();
 
